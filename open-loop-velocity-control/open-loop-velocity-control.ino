@@ -17,10 +17,6 @@ void setup() {
   while (!Serial);
   SimpleFOCDebug::enable(&Serial);
 
-  // Pin 12 used as GND for specific shield stacking
-  pinMode(12, OUTPUT);
-  digitalWrite(12, LOW);
-
   // Driver 1 & Motor 1 Setup
   leftDriver.voltage_power_supply = 11;
   leftDriver.init();

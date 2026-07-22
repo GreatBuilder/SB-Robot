@@ -25,7 +25,8 @@ void setup() {
   leftDriver.voltage_power_supply = 11;
   leftDriver.init();
   leftMotor.linkDriver(&leftDriver);
-  leftMotor.voltage_limit = 0.5;
+  leftMotor.voltage_limit = 1.5;
+  rightMotor.velocity_limit = 30;
   leftMotor.controller = MotionControlType::velocity_openloop;
   leftMotor.init();
 
@@ -33,7 +34,8 @@ void setup() {
   rightDriver.voltage_power_supply = 11;
   rightDriver.init();
   rightMotor.linkDriver(&rightDriver);
-  rightMotor.voltage_limit = 0.5;
+  rightMotor.voltage_limit = 1.5;
+  rightMotor.velocity_limit = 30;
   rightMotor.controller = MotionControlType::velocity_openloop;
   rightMotor.init();
 
@@ -41,8 +43,8 @@ void setup() {
   command.add('L', doLeftMotor, "Left Motor");
   command.add('R', doRightMotor, "Right Motor");
 
-  leftMotor.target = 10; 
-  rightMotor.target = -10; 
+  leftMotor.target = -10; 
+  rightMotor.target = 10; 
 
   Serial.println(F("Motors ready. Set target velocity (e.g., 'L10' or 'R5')"));
   _delay(1000);

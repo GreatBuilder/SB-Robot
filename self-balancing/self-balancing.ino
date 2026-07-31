@@ -35,62 +35,124 @@ Adafruit_MPU6050 mpu;
 // Balance settings
 // =====================================================
 
-// Start gently
 float balanceKp = 0.20;
 float balanceKd = 0.015;
 
-// Maximum requested wheel velocity
 float maxMotorSpeed = 4.0;
-
-// Stop balancing past this angle
 float fallAngle = 30.0;
 
-// Upright calibration values
 float uprightAngle = 0.0;
 float gyroOffsetX = 0.0;
-
-// Filtered robot angle
 float filteredAngle = 0.0;
 
-// Timing
 unsigned long lastBalanceMicros = 0;
 unsigned long lastPrintMillis = 0;
+
+// =====================================================
+// Helper functions
+// =====================================================
 
 void stopMotors() {
   leftMotor.target = 0.0;
   rightMotor.target = 0.0;
 }
 
+bool devicePresent(TwoWire& bus, uint8_t address) {
+  bus.beginTransmission(address);
+  return bus.endTransmission() == 0;
+}
+
+void recoverMainI2CBus() {
+  Wire.end();
+
+  pinMode(SDA, INPUT_PULLUP);
+  pinMode(SCL, OUTPUT);
+  digitalWrite(SCL, HIGH);
+
+  // Clock pulses can release a device stuck during a transaction
+  for (int i = 0; i < 16; i++) {
+    digitalWrite(SCL, LOW);
+    delayMicroseconds(5);
+
+    digitalWrite(SCL, HIGH);
+    delayMicroseconds(5);
+  }
+
+  // Generate an I2C STOP condition
+  pinMode(SDA, OUTPUT);
+  digitalWrite(SDA, LOW);
+  delayMicroseconds(5);
+
+  digitalWrite(SCL, HIGH);
+  delayMicroseconds(5);
+
+  digitalWrite(SDA, HIGH);
+  delayMicroseconds(5);
+
+  pinMode(SDA, INPUT_PULLUP);
+  pinMode(SCL, INPUT_PULLUP);
+
+  // Start Wire once at 10 kHz
+  Wire.begin();
+  Wire.setClock(10000);
+}
+
+// =====================================================
+// Setup
+// =====================================================
+
 void setup() {
   Serial.begin(115200);
-  delay(2000);
+  delay(1000);
 
   SimpleFOCDebug::enable(&Serial);
 
-  // =====================================================
-  // I2C buses
-  // =====================================================
+  // -----------------------------------------------------
+  // Start both I2C buses once
+  // -----------------------------------------------------
 
-  // Left encoder and MPU6050
-  Wire.begin();
-  Wire.setClock(100000);
+  recoverMainI2CBus();
 
-  // Right encoder
   Wire1.begin();
-  Wire1.setClock(100000);
+  Wire1.setClock(10000);
 
-  leftEncoder.init(&Wire);
-  rightEncoder.init(&Wire1);
+  delay(100);
 
-  leftMotor.linkSensor(&leftEncoder);
-  rightMotor.linkSensor(&rightEncoder);
+  Serial.print("SDA idle state: ");
+  Serial.println(digitalRead(SDA));
 
-  // =====================================================
-  // MPU6050
-  // =====================================================
+  Serial.print("SCL idle state: ");
+  Serial.println(digitalRead(SCL));
+
+  // -----------------------------------------------------
+  // Verify all sensors before continuing
+  // -----------------------------------------------------
+
+  Serial.println("Checking sensors...");
+
+  if (!devicePresent(Wire, 0x36)) {
+    Serial.println("Left AS5600 missing");
+    while (1);
+  }
+
+  if (!devicePresent(Wire, 0x68)) {
+    Serial.println("MPU6050 missing");
+    while (1);
+  }
+
+  if (!devicePresent(Wire1, 0x36)) {
+    Serial.println("Right AS5600 missing");
+    while (1);
+  }
+
+  Serial.println("All sensors detected");
+
+  // -----------------------------------------------------
+  // Initialize MPU6050 first
+  // -----------------------------------------------------
 
   if (!mpu.begin(0x68, &Wire)) {
-    Serial.println("MPU6050 not found");
+    Serial.println("MPU6050 initialization failed");
     while (1);
   }
 
@@ -98,9 +160,23 @@ void setup() {
   mpu.setGyroRange(MPU6050_RANGE_500_DEG);
   mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);
 
-  // =====================================================
-  // Drivers
-  // =====================================================
+  Serial.println("MPU6050 initialized");
+
+  // -----------------------------------------------------
+  // Initialize encoders
+  // -----------------------------------------------------
+
+  leftEncoder.init(&Wire);
+  rightEncoder.init(&Wire1);
+
+  leftMotor.linkSensor(&leftEncoder);
+  rightMotor.linkSensor(&rightEncoder);
+
+  Serial.println("Encoders initialized");
+
+  // -----------------------------------------------------
+  // Left driver
+  // -----------------------------------------------------
 
   leftDriver.voltage_power_supply = 11.0;
 
@@ -111,6 +187,10 @@ void setup() {
 
   leftMotor.linkDriver(&leftDriver);
 
+  // -----------------------------------------------------
+  // Right driver
+  // -----------------------------------------------------
+
   rightDriver.voltage_power_supply = 11.0;
 
   if (!rightDriver.init()) {
@@ -120,9 +200,9 @@ void setup() {
 
   rightMotor.linkDriver(&rightDriver);
 
-  // =====================================================
-  // Same working closed-loop motor settings
-  // =====================================================
+  // -----------------------------------------------------
+  // Left motor settings
+  // -----------------------------------------------------
 
   leftMotor.controller = MotionControlType::velocity;
   leftMotor.torque_controller = TorqueControlType::voltage;
@@ -136,6 +216,10 @@ void setup() {
   leftMotor.PID_velocity.D = 0.0;
   leftMotor.LPF_velocity.Tf = 0.02;
 
+  // -----------------------------------------------------
+  // Right motor settings
+  // -----------------------------------------------------
+
   rightMotor.controller = MotionControlType::velocity;
   rightMotor.torque_controller = TorqueControlType::voltage;
 
@@ -148,9 +232,9 @@ void setup() {
   rightMotor.PID_velocity.D = 0.0;
   rightMotor.LPF_velocity.Tf = 0.02;
 
-  // =====================================================
-  // Motor initialization
-  // =====================================================
+  // -----------------------------------------------------
+  // Initialize motors
+  // -----------------------------------------------------
 
   if (!leftMotor.init()) {
     Serial.println("Left motor init failed");
@@ -162,12 +246,18 @@ void setup() {
     while (1);
   }
 
+  // -----------------------------------------------------
+  // FOC alignment
+  // -----------------------------------------------------
+
   Serial.println("Aligning left motor");
 
   if (!leftMotor.initFOC()) {
     Serial.println("Left FOC failed");
+
     leftDriver.disable();
     rightDriver.disable();
+
     while (1);
   }
 
@@ -175,15 +265,16 @@ void setup() {
 
   if (!rightMotor.initFOC()) {
     Serial.println("Right FOC failed");
+
     leftDriver.disable();
     rightDriver.disable();
+
     while (1);
   }
 
-  // =====================================================
-  // Upright calibration
-  // Hold the robot completely upright and motionless
-  // =====================================================
+  // -----------------------------------------------------
+  // Upright MPU6050 calibration
+  // -----------------------------------------------------
 
   Serial.println("Hold robot upright and still");
   delay(2000);
@@ -224,8 +315,12 @@ void setup() {
   Serial.println("Balance control started");
 }
 
+// =====================================================
+// Main loop
+// =====================================================
+
 void loop() {
-  // Must run continuously
+  // Run FOC as frequently as possible
   leftMotor.loopFOC();
   rightMotor.loopFOC();
 
@@ -234,7 +329,7 @@ void loop() {
   // Balance update at 100 Hz
   if (now - lastBalanceMicros >= 10000) {
     float dt =
-      (now - lastBalanceMicros) / 1000000.0;
+      (now - lastBalanceMicros) / 10000.0;
 
     lastBalanceMicros = now;
 
@@ -247,12 +342,10 @@ void loop() {
     float AY = accel.acceleration.y;
     float AZ = accel.acceleration.z;
 
-    // Positive forward, approximately zero upright,
-    // negative backward for your sensor orientation
+    // Positive forward, zero near upright, negative backward
     float angleX =
       atan2(AY, AZ) * 180.0 / PI;
 
-    // Gyroscope rotation rate around X axis
     float gyroRateX =
       (gyro.gyro.x - gyroOffsetX) *
       180.0 / PI;
@@ -267,12 +360,26 @@ void loop() {
 
     if (!validReading) {
       stopMotors();
-      filteredAngle = angleX;
+
+      // Do not integrate a corrupted gyro reading
+      if (isfinite(angleX)) {
+        filteredAngle = angleX;
+      }
+
+      if (millis() - lastPrintMillis >= 100) {
+        lastPrintMillis = millis();
+
+        Serial.print("Invalid MPU reading");
+        Serial.print("\tAngleX:");
+        Serial.print(angleX, 2);
+        Serial.print("\tGX:");
+        Serial.println(gyroRateX, 2);
+      }
     } else {
-      // Combine fast gyro response with stable accelerometer angle
+      // Complementary filter
       filteredAngle =
-        0.98 * (filteredAngle + gyroRateX * dt)
-        + 0.02 * angleX;
+        0.98 * (filteredAngle + gyroRateX * dt) +
+        0.02 * angleX;
 
       float angleError =
         filteredAngle - uprightAngle;
@@ -290,9 +397,14 @@ void loop() {
             -maxMotorSpeed,
             maxMotorSpeed
           );
+      } else {
+        motorCommand = 0.0;
+
+        // Prevent the filter from staying at a huge angle
+        filteredAngle = angleX;
       }
 
-      // Motors are physically mirrored
+      // Motors face opposite directions
       leftMotor.target = -motorCommand;
       rightMotor.target = motorCommand;
 
@@ -327,6 +439,7 @@ void loop() {
     }
   }
 
+  // Run velocity controllers continuously
   leftMotor.move();
   rightMotor.move();
 }

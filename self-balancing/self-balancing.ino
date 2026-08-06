@@ -1,7 +1,10 @@
+#define DEBUG_SERIAL Serial
 #include <SimpleFOC.h>
 #include <Wire.h>
 #include <Adafruit_MPU6050.h>
 #include <Adafruit_Sensor.h>
+
+#define I2C_CLOCK 100000 // 100KHz
 
 // =====================================================
 // Encoders
@@ -35,11 +38,11 @@ Adafruit_MPU6050 mpu;
 // Balance settings
 // =====================================================
 
-float balanceKp = 0.20;
-float balanceKd = 0.015;
+float balanceKp = 0.80;
+float balanceKd = 0.04;
 
-float maxMotorSpeed = 4.0;
-float fallAngle = 30.0;
+float maxMotorSpeed = 8.0;
+float fallAngle = 20.0;
 
 float uprightAngle = 0.0;
 float gyroOffsetX = 0.0;
@@ -52,7 +55,8 @@ unsigned long lastPrintMillis = 0;
 // Helper functions
 // =====================================================
 
-void stopMotors() {
+void stopMotors() 
+{
   leftMotor.target = 0.0;
   rightMotor.target = 0.0;
 }
@@ -92,9 +96,8 @@ void recoverMainI2CBus() {
   pinMode(SDA, INPUT_PULLUP);
   pinMode(SCL, INPUT_PULLUP);
 
-  // Start Wire once at 10 kHz
   Wire.begin();
-  Wire.setClock(10000);
+  Wire.setClock(I2C_CLOCK);
 }
 
 // =====================================================
@@ -114,7 +117,7 @@ void setup() {
   recoverMainI2CBus();
 
   Wire1.begin();
-  Wire1.setClock(10000);
+  Wire1.setClock(I2C_CLOCK);
 
   delay(100);
 
@@ -132,17 +135,17 @@ void setup() {
 
   if (!devicePresent(Wire, 0x36)) {
     Serial.println("Left AS5600 missing");
-    while (1);
+    // while (1);
   }
 
   if (!devicePresent(Wire, 0x68)) {
     Serial.println("MPU6050 missing");
-    while (1);
+    // while (1);
   }
 
   if (!devicePresent(Wire1, 0x36)) {
     Serial.println("Right AS5600 missing");
-    while (1);
+    // while (1);
   }
 
   Serial.println("All sensors detected");
@@ -185,6 +188,9 @@ void setup() {
     while (1);
   }
 
+  // Keep driver outputs disabled until we are ready to run FOC
+  leftDriver.disable();
+
   leftMotor.linkDriver(&leftDriver);
 
   // -----------------------------------------------------
@@ -198,6 +204,9 @@ void setup() {
     while (1);
   }
 
+  // Keep driver outputs disabled until we are ready to run FOC
+  rightDriver.disable();
+
   rightMotor.linkDriver(&rightDriver);
 
   // -----------------------------------------------------
@@ -207,8 +216,8 @@ void setup() {
   leftMotor.controller = MotionControlType::velocity;
   leftMotor.torque_controller = TorqueControlType::voltage;
 
-  leftMotor.voltage_limit = 1.0;
-  leftMotor.voltage_sensor_align = 1.0;
+  leftMotor.voltage_limit = 3.0;
+  leftMotor.voltage_sensor_align = 3.0;
   leftMotor.velocity_limit = 15.0;
 
   leftMotor.PID_velocity.P = 0.15;
@@ -223,8 +232,8 @@ void setup() {
   rightMotor.controller = MotionControlType::velocity;
   rightMotor.torque_controller = TorqueControlType::voltage;
 
-  rightMotor.voltage_limit = 1.0;
-  rightMotor.voltage_sensor_align = 1.0;
+  rightMotor.voltage_limit = 3.0;
+  rightMotor.voltage_sensor_align = 3.0;
   rightMotor.velocity_limit = 15.0;
 
   rightMotor.PID_velocity.P = 0.15;
@@ -236,14 +245,15 @@ void setup() {
   // Initialize motors
   // -----------------------------------------------------
 
-  if (!leftMotor.init()) {
+  if (!leftMotor.init())
+  {
     Serial.println("Left motor init failed");
-    while (1);
+    // while (1);
   }
 
   if (!rightMotor.init()) {
     Serial.println("Right motor init failed");
-    while (1);
+    // while (1);
   }
 
   // -----------------------------------------------------
@@ -252,13 +262,17 @@ void setup() {
 
   Serial.println("Aligning left motor");
 
-  if (!leftMotor.initFOC()) {
+  // Enable driver shortly before running alignment so PWM doesn't start earlier
+  leftDriver.enable();
+
+  if (!leftMotor.initFOC()) 
+  {
     Serial.println("Left FOC failed");
 
     leftDriver.disable();
     rightDriver.disable();
 
-    while (1);
+    // while (1);
   }
 
   Serial.println("Aligning right motor");
@@ -269,7 +283,7 @@ void setup() {
     leftDriver.disable();
     rightDriver.disable();
 
-    while (1);
+    // while (1);
   }
 
   // -----------------------------------------------------
@@ -322,14 +336,15 @@ void setup() {
 void loop() {
   // Run FOC as frequently as possible
   leftMotor.loopFOC();
+  delayMicroseconds(100);
   rightMotor.loopFOC();
 
   unsigned long now = micros();
 
   // Balance update at 100 Hz
-  if (now - lastBalanceMicros >= 10000) {
-    float dt =
-      (now - lastBalanceMicros) / 10000.0;
+  if (now - lastBalanceMicros >= 10000) 
+  {
+    float dt = (now - lastBalanceMicros) / 10000.0;
 
     lastBalanceMicros = now;
 
@@ -338,6 +353,7 @@ void loop() {
     sensors_event_t temperature;
 
     mpu.getEvent(&accel, &gyro, &temperature);
+    delayMicroseconds(100);
 
     float AY = accel.acceleration.y;
     float AZ = accel.acceleration.z;
@@ -350,13 +366,13 @@ void loop() {
       (gyro.gyro.x - gyroOffsetX) *
       180.0 / PI;
 
-    bool validReading =
-      isfinite(angleX) &&
-      isfinite(gyroRateX) &&
-      fabs(angleX) <= 180.0 &&
-      fabs(gyroRateX) <= 550.0 &&
-      dt > 0.001 &&
-      dt < 0.05;
+    bool validReading = true;
+//      isfinite(angleX) &&
+//      isfinite(gyroRateX) &&
+//      fabs(angleX) <= 180.0 &&
+//      fabs(gyroRateX) <= 550.0 &&
+//      dt > 0.001 &&
+//      dt < 0.05;
 
     if (!validReading) {
       stopMotors();
@@ -366,7 +382,8 @@ void loop() {
         filteredAngle = angleX;
       }
 
-      if (millis() - lastPrintMillis >= 100) {
+      if (false) // if (millis() - lastPrintMillis >= 100) 
+      {
         lastPrintMillis = millis();
 
         Serial.print("Invalid MPU reading");
@@ -405,8 +422,8 @@ void loop() {
       }
 
       // Motors face opposite directions
-      leftMotor.target = -motorCommand;
-      rightMotor.target = motorCommand;
+      leftMotor.target = motorCommand;
+      rightMotor.target = -motorCommand;
 
       if (millis() - lastPrintMillis >= 100) {
         lastPrintMillis = millis();
@@ -440,6 +457,8 @@ void loop() {
   }
 
   // Run velocity controllers continuously
+  delayMicroseconds(100);
   leftMotor.move();
+  delayMicroseconds(100);
   rightMotor.move();
 }

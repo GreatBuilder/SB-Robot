@@ -17,6 +17,8 @@ BLDCDriver3PWM rightDriver = BLDCDriver3PWM(3, 5, 6, 7);
 float leftTarget = 0.0;
 float rightTarget = 0.0;
 
+unsigned long lastPrintTime = 0;
+
 // Serial commander
 Commander command = Commander(Serial);
 
@@ -141,6 +143,7 @@ void setup() {
 }
 
 void loop() {
+  // Execute FOC and motor control as fast as possible
   leftMotor.loopFOC();
   rightMotor.loopFOC();
 
@@ -148,4 +151,36 @@ void loop() {
   rightMotor.move(rightTarget);
 
   command.run();
+
+  // Print telemetry every 100ms without blocking the FOC loop
+  if (millis() - lastPrintTime >= 100) {
+    lastPrintTime = millis();
+
+    // Read actual values from sensors/motors
+    float leftAngle = leftEncoder.getAngle();
+    float leftActualVel = leftMotor.shaft_velocity;
+    float leftError = leftTarget - leftActualVel;
+
+    float rightAngle = rightEncoder.getAngle();
+    float rightActualVel = rightMotor.shaft_velocity;
+    float rightError = rightTarget - rightActualVel;
+
+    // Print Left Motor Telemetry
+    Serial.print("L_Ang:");
+    Serial.print(leftAngle, 2);
+    Serial.print(" rad | L_Vel:");
+    Serial.print(leftActualVel, 2);
+    Serial.print(" | L_Err:");
+    Serial.print(leftError, 2);
+
+    Serial.print("  ||  ");
+
+    // Print Right Motor Telemetry
+    Serial.print("R_Ang:");
+    Serial.print(rightAngle, 2);
+    Serial.print(" rad | R_Vel:");
+    Serial.print(rightActualVel, 2);
+    Serial.print(" | R_Err:");
+    Serial.println(rightError, 2);
+  }
 }
